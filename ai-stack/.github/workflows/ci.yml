@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible + ansible-lint
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Create placeholder vault file for syntax check
+        run: cp group_vars/all/vault.yml.example group_vars/all/vault.yml
+
+      - name: ansible-lint
+        run: ansible-lint
+
+      - name: Syntax-check every playbook (both inventories)
+        run: |
+          for pb in site.yml playbooks/*.yml; do
+            for inv in inventories/staging inventories/prod; do
+              ansible-playbook --syntax-check -i "$inv" "$pb" \
+                -e release=1.0 || exit 1
+            done
+          done
