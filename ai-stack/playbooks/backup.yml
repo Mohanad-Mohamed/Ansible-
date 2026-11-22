@@ -1,0 +1,117 @@
+---
+# Pre-flight checks + backups. Run before ANY change (upgrade, patch, rollback-restore).
+- name: Pre-flight and backup
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ backup_release | default(release) }}.yml"
+  tasks:
+    # ---------- PRE-FLIGHT ----------
+    - name: Check disk space on data volume (need > 5 GB free)
+      ansible.builtin.shell: |
+        avail_kb=$(df -k /var/lib/rancher/k3s | awk 'NR==2{print $4}')
+        echo "$avail_kb"
+        [ "$avail_kb" -gt 5242880 ]
+      register: disk_check
+      changed_when: false
+
+    - name: Fail if disk space is low
+      ansible.builtin.fail:
+        msg: "Not enough free disk space for backup/upgrade (need >5GB on /var/lib/rancher/k3s)"
+      when: disk_check.rc != 0
+
+    - name: Check cluster health — all nodes Ready
+      ansible.builtin.command: kubectl get nodes -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+      register: nodes_ready
+      changed_when: false
+
+    - name: Fail if any node is not Ready
+      ansible.builtin.fail:
+        msg: "Cluster unhealthy: {{ nodes_ready.stdout_lines }}"
+      when: "'True' not in nodes_ready.stdout_lines or nodes_ready.stdout_lines | length != groups['all'] | length"
+
+    - name: Check critical deployments are available
+      ansible.builtin.command: kubectl get deploy -n {{ k8s_namespace }} -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.availableReplicas}{"/"}{.status.replicas}{"\n"}{end}'
+      register: deploy_status
+      changed_when: false
+
+    - name: Show deployment status
+      ansible.builtin.debug:
+        var: deploy_status.stdout_lines
+
+    # ---------- BACKUP ----------
+    - name: Create backup directory with timestamp
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ ansible_date_time.iso8601_basic_short }}"
+        state: directory
+        mode: "0700"
+      register: backup_dir_created
+
+    - name: Set backup path fact
+      ansible.builtin.set_fact:
+        backup_path: "{{ backup_dir }}/{{ ansible_date_time.iso8601_basic_short }}"
+
+    - name: Dump PostgreSQL (pg_dump custom format, compressed)
+      ansible.builtin.shell: |
+        kubectl exec -n {{ k8s_namespace }} deploy/postgres -- \
+          pg_dump -U {{ vault_postgres_user }} -d {{ vault_postgres_db }} -Fc \
+          > {{ backup_path }}/postgres.dump
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Verify postgres dump is non-empty and valid
+      ansible.builtin.shell: |
+        size=$(wc -c < {{ backup_path }}/postgres.dump)
+        pg_restore -l {{ backup_path }}/postgres.dump > /dev/null
+        [ "$size" -gt 1024 ]
+      register: pg_restore_list
+      changed_when: false
+
+    - name: Create Qdrant snapshot of collection {{ qdrant_collection }}
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} deploy/litellm --
+        python3 -c "import urllib.request,json;
+        req=urllib.request.Request('http://qdrant:6333/collections/{{ qdrant_collection }}/snapshots',data=b'',method='POST');
+        print(urllib.request.urlopen(req,timeout=120).read().decode())"
+      register: qdrant_snapshot
+      changed_when: true
+
+    - name: Show qdrant snapshot response
+      ansible.builtin.debug:
+        var: qdrant_snapshot.stdout
+      when: qdrant_snapshot.rc == 0
+
+    - name: Copy Qdrant snapshots out of the pod
+      ansible.builtin.shell: |
+        POD=$(kubectl get pod -n {{ k8s_namespace }} -l app=qdrant -o jsonpath='{.items[0].metadata.name}')
+        kubectl cp {{ k8s_namespace }}/$POD:/qdrant/storage/snapshots {{ backup_path }}/qdrant-snapshots
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
+    - name: Record backup metadata
+      ansible.builtin.copy:
+        dest: "{{ backup_path }}/BACKUP-INFO.txt"
+        mode: "0600"
+        content: |
+          Backup taken: {{ ansible_date_time.iso8601 }}
+          Release: {{ backup_release | default(release) }}
+          Host: {{ inventory_hostname }}
+          Postgres dump: postgres.dump (pg_dump -Fc)
+          Qdrant snapshots: qdrant-snapshots/
+          Restore instructions: see playbooks/rollback.yml and UPGRADE-1.0-to-1.1.md
+      no_log: false
+
+    - name: Prune backups older than {{ backup_retention_days }} days
+      ansible.builtin.shell: |
+        find {{ backup_dir }} -maxdepth 1 -type d -mtime +{{ backup_retention_days }} -exec rm -rf {} +
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
+    - name: Backup complete
+      ansible.builtin.debug:
+        msg: "Backup stored at {{ backup_path }}"

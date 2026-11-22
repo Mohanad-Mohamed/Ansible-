@@ -1,0 +1,55 @@
+---
+# Full deployment of one release. Entry point:
+#   ansible-playbook -i inventories/staging site.yml -e release=1.0
+- name: Deploy mini AI stack
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  roles:
+    - common
+    - k3s
+    - registry
+    - database
+    - model_server
+    - embeddings
+    - vector_db
+    - gateway
+    - gpu          # auto-skips when no NVIDIA GPU is present
+
+- name: Ensure Qdrant collection and stable alias exist, then smoke test
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  tasks:
+    - name: Get litellm pod name
+      ansible.builtin.command: >-
+        kubectl get pod -n {{ k8s_namespace }} -l app=litellm
+        -o jsonpath='{.items[0].metadata.name}'
+      register: litellm_pod
+      changed_when: false
+
+    - name: Copy ensure_collection.py into litellm pod
+      ansible.builtin.command: >-
+        kubectl cp {{ playbook_dir }}/scripts/ensure_collection.py
+        {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
+      changed_when: false
+
+    - name: Ensure collection {{ qdrant_collection }} and alias '{{ app_contract.qdrant_collection_alias }}'
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ qdrant_collection }}
+        COLLECTION_ALIAS={{ app_contract.qdrant_collection_alias }}
+        python3 /tmp/ensure_collection.py
+      register: ensure_coll
+      changed_when: false
+
+    - name: Show collection/alias result
+      ansible.builtin.debug:
+        var: ensure_coll.stdout_lines
+
+    - name: Run smoke test
+      ansible.builtin.include_role:
+        name: smoke_test

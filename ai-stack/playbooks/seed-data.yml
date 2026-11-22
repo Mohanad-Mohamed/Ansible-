@@ -1,0 +1,90 @@
+---
+# Load seed documents into Qdrant and create the two LiteLLM API keys.
+# Run AFTER site.yml with release=1.0 (or after the data-migration step of an upgrade).
+- name: Seed data and API keys
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  tasks:
+    - name: Ensure litellm pod is running
+      ansible.builtin.command: kubectl rollout status deployment/litellm -n {{ k8s_namespace }} --timeout=300s
+      changed_when: false
+
+    - name: Get litellm pod name
+      ansible.builtin.command: >-
+        kubectl get pod -n {{ k8s_namespace }} -l app=litellm
+        -o jsonpath='{.items[0].metadata.name}'
+      register: litellm_pod
+      changed_when: false
+
+    - name: Copy seed file and scripts into litellm pod
+      ansible.builtin.shell: |
+        kubectl cp {{ seed_file }} {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
+        kubectl cp {{ playbook_dir }}/scripts/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
+        kubectl cp {{ playbook_dir }}/scripts/create_keys.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/create_keys.py
+      changed_when: false
+
+    - name: Load documents into Qdrant collection {{ qdrant_collection }}
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env EMBED_ALIAS={{ app_contract.embedding_model_alias }}
+        QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ qdrant_collection }}
+        SEED_FILE=/tmp/documents.jsonl
+        python3 /tmp/seed_documents.py
+      register: seed_result
+      changed_when: "'created collection' in seed_result.stdout"
+
+    - name: Show seed result
+      ansible.builtin.debug:
+        var: seed_result.stdout_lines
+
+    - name: Check whether app-keys secret already exists (idempotency)
+      ansible.builtin.command: kubectl get secret litellm-app-keys -n {{ k8s_namespace }}
+      register: keys_secret
+      changed_when: false
+      failed_when: false
+
+    - name: Create LiteLLM API keys (only if secret does not exist yet)
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        python3 /tmp/create_keys.py
+      register: keys_result
+      changed_when: true
+      when: keys_secret.rc != 0
+
+    - name: Extract keys from output
+      ansible.builtin.set_fact:
+        app_keys: "{{ (keys_result.stdout_lines | select('match', '^KEYS_JSON:') | first | regex_replace('^KEYS_JSON:', '')) | from_json }}"
+      when: keys_secret.rc != 0
+
+    - name: Store keys in k8s secret litellm-app-keys
+      ansible.builtin.shell: |
+        kubectl create secret generic litellm-app-keys -n {{ k8s_namespace }} \
+          --from-literal=chat_key='{{ app_keys.chat_key }}' \
+          --from-literal=embed_key='{{ app_keys.embed_key }}' \
+          --dry-run=client -o yaml | kubectl apply -f -
+      when: keys_secret.rc != 0
+      no_log: true
+
+    - name: Write keys to local file for vault update (git-ignored)
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/generated-keys.json"
+        mode: "0600"
+        content: "{{ app_keys | to_nice_json }}\n"
+      when: keys_secret.rc != 0
+      no_log: true
+
+    - name: Remind operator to move keys into vault
+      ansible.builtin.debug:
+        msg: >-
+          API keys created and stored in k8s secret 'litellm-app-keys' and
+          {{ playbook_dir }}/generated-keys.json.
+          Move them into group_vars/all/vault.yml (vault_litellm_key_chat /
+          vault_litellm_key_embed) and delete generated-keys.json.
+      when: keys_secret.rc != 0
+
+    - name: Run smoke test
+      ansible.builtin.include_role:
+        name: smoke_test
