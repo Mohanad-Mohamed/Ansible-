@@ -1,0 +1,151 @@
+---
+# Rollback to release 1.0 after a failed/partial 1.1 upgrade.
+#   ansible-playbook -i inventories/staging playbooks/rollback.yml -e release=1.0
+#
+# WHAT CAN AND CANNOT BE ROLLED BACK (honest assessment):
+#  - App/component images (LiteLLM, Qdrant, TEI, k3s): YES — manifests are
+#    re-applied with release=1.0 pins; kubectl rolls the deployments back.
+#  - Qdrant data: YES — documents_v1 was never deleted; the 'documents' alias
+#    is switched back atomically. documents_v2 is kept for forensics.
+#  - LiteLLM keys/state in Postgres: YES *if* Postgres is rolled back too.
+#  - Postgres 17 -> 16: POSSIBLE but destructive-forward-only in one direction.
+#    pg17 data files cannot be read by pg16 binaries, so we restore the
+#    pre-upgrade pg_dump into a fresh pg16 PVC (same procedure as the upgrade,
+#    reversed). Any LiteLLM writes made WHILE on 1.1 are LOST — that is the
+#    honest cost. This is why the pre-flight backup is mandatory.
+#  - OS patches / k3s version: k3s rolls back via the installer; OS patches
+#    are NOT rolled back (they are security fixes; rolling them back would
+#    reintroduce CVEs — documented, accepted risk).
+- name: Rollback to release {{ release }}
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  tasks:
+    # ---------- 0. Find the newest backup ----------
+    - name: Locate newest backup directory
+      ansible.builtin.shell: ls -td {{ backup_dir }}/*/ | head -1
+      register: latest_backup
+      changed_when: false
+
+    - name: Set backup_path fact
+      ansible.builtin.set_fact:
+        backup_path: "{{ latest_backup.stdout | trim }}"
+
+    - name: Show backup being used for rollback
+      ansible.builtin.debug:
+        msg: "Rollback will use backup at {{ backup_path }}"
+
+    # ---------- 1. Switch Qdrant alias back to the old collection ----------
+    - name: Get litellm pod name
+      ansible.builtin.command: >-
+        kubectl get pod -n {{ k8s_namespace }} -l app=litellm
+        -o jsonpath='{.items[0].metadata.name}'
+      register: litellm_pod
+      changed_when: false
+      failed_when: false
+
+    - name: Copy ensure_collection.py
+      ansible.builtin.command: >-
+        kubectl cp {{ playbook_dir }}/scripts/ensure_collection.py
+        {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
+      when: litellm_pod.rc == 0
+      changed_when: true
+      failed_when: false
+
+    - name: Point 'documents' alias back to {{ collections['1.0'] }}
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ collections['1.0'] }}
+        COLLECTION_ALIAS={{ app_contract.qdrant_collection_alias }}
+        python3 /tmp/ensure_collection.py
+      when: litellm_pod.rc == 0
+      changed_when: true
+      failed_when: false
+
+    # ---------- 2. Roll back Postgres if it was upgraded ----------
+    - name: Detect current postgres major
+      ansible.builtin.command: >-
+        kubectl get deploy postgres -n {{ k8s_namespace }}
+        -o jsonpath='{.spec.template.spec.containers[0].image}'
+      register: pg_image
+      changed_when: false
+      failed_when: false
+
+    - name: Set current major fact
+      ansible.builtin.set_fact:
+        pg_current_major: "{{ '17' if 'postgres:17' in (pg_image.stdout | default('')) else '16' }}"
+
+    - name: Postgres rollback needed (currently on 17, target is 16)
+      ansible.builtin.set_fact:
+        pg_rollback_needed: "{{ pg_current_major != postgres_major }}"
+
+    - name: Scale postgres to 0
+      ansible.builtin.command: kubectl scale deploy/postgres -n {{ k8s_namespace }} --replicas=0
+      when: pg_rollback_needed | bool
+      changed_when: true
+
+    - name: Delete postgres deployment and PVC
+      ansible.builtin.shell: |
+        kubectl delete deploy postgres -n {{ k8s_namespace }} --ignore-not-found
+        kubectl delete pvc postgres-pvc -n {{ k8s_namespace }} --ignore-not-found
+      when: pg_rollback_needed | bool
+      changed_when: true
+
+    - name: Deploy postgres {{ postgres_major }} fresh
+      ansible.builtin.include_role:
+        name: database
+      when: pg_rollback_needed | bool
+
+    - name: Copy backup dump into postgres pod
+      ansible.builtin.shell: |
+        POD=$(kubectl get pod -n {{ k8s_namespace }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+        kubectl cp {{ backup_path }}/postgres.dump {{ k8s_namespace }}/$POD:/tmp/postgres.dump
+      args:
+        executable: /bin/bash
+      when: pg_rollback_needed | bool
+      changed_when: true
+
+    - name: Restore dump into postgres {{ postgres_major }}
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} deploy/postgres --
+        pg_restore -U {{ vault_postgres_user }} -d {{ vault_postgres_db }}
+        --clean --if-exists --no-owner /tmp/postgres.dump
+      when: pg_rollback_needed | bool
+      changed_when: true
+
+    # ---------- 3. Re-apply all release-1.0 manifests (images roll back) ----------
+    - name: Re-apply k3s (downgrade if needed)
+      ansible.builtin.include_role:
+        name: k3s
+
+    - name: Re-apply registry
+      ansible.builtin.include_role:
+        name: registry
+
+    - name: Re-apply model server
+      ansible.builtin.include_role:
+        name: model_server
+
+    - name: Re-apply embeddings (back to 1.0 model)
+      ansible.builtin.include_role:
+        name: embeddings
+
+    - name: Re-apply vector db
+      ansible.builtin.include_role:
+        name: vector_db
+
+    - name: Re-apply gateway
+      ansible.builtin.include_role:
+        name: gateway
+
+    - name: Ensure database applied (when pg was NOT rolled back above)
+      ansible.builtin.include_role:
+        name: database
+      when: not (pg_rollback_needed | bool)
+
+    # ---------- 4. Smoke test proves the rollback ----------
+    - name: Run smoke test
+      ansible.builtin.include_role:
+        name: smoke_test

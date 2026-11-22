@@ -1,0 +1,227 @@
+---
+# Upgrade from release 1.0 to 1.1.
+#   ansible-playbook -i inventories/staging playbooks/upgrade.yml -e release=1.1
+#
+# ORDER OF STEPS AND WHY:
+#  1. Pre-flight + backup        — never change anything without a restore point.
+#  2. OS patching (serial:1)     — reboot BEFORE the k3s upgrade so the node
+#                                  reboots only once.
+#  3. k3s upgrade                — platform first; workloads tolerate the
+#                                  brief API restart (pods keep running).
+#  4. Postgres 16 -> 17          — dump/restore while LiteLLM is still on the
+#                                  old version (pg17 accepts its queries).
+#  5. Component images           — Qdrant, TEI (new embedding model), LiteLLM.
+#                                  Stateless-ish services roll with zero downtime.
+#  6. Data migration             — re-embed into documents_v2 with the NEW model,
+#                                  VERIFY, then atomically move the 'documents'
+#                                  alias. Readers never see a missing collection.
+#  7. Smoke test                 — proves the whole chain end to end.
+- name: Step 1 — pre-flight checks and backup (of release 1.0 data)
+  import_playbook: backup.yml
+  vars:
+    backup_release: "1.0"
+
+- name: Step 2 — OS security patching (self-skips unless os_patching=true)
+  import_playbook: os-patch.yml
+
+- name: Step 3+ — platform and component upgrade to {{ release }}
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  roles:
+    - k3s            # upgrades k3s binary if k3s_version differs (idempotent)
+
+  tasks:
+    # ---------- 4. Postgres major upgrade (dump/restore) ----------
+    - name: Detect currently deployed postgres major version
+      ansible.builtin.command: >-
+        kubectl get deploy postgres -n {{ k8s_namespace }}
+        -o jsonpath='{.spec.template.spec.containers[0].image}'
+      register: pg_current_image
+      changed_when: false
+      failed_when: false
+
+    - name: Set fact for current postgres major
+      ansible.builtin.set_fact:
+        pg_current_major: "{{ '17' if 'postgres:17' in (pg_current_image.stdout | default('')) else '16' }}"
+
+    - name: PostgreSQL major upgrade required
+      ansible.builtin.set_fact:
+        pg_major_upgrade_needed: "{{ pg_current_major != postgres_major }}"
+
+    - name: Explain pg_upgrade vs dump/restore choice
+      ansible.builtin.debug:
+        msg: >-
+          PostgreSQL {{ pg_current_major }} -> {{ postgres_major }}:
+          using pg_dump/pg_restore (custom format). Chosen over pg_upgrade
+          because pg_upgrade requires identical filesystem layout and matching
+          binary paths inside the container, which breaks across image changes;
+          dump/restore is portable, verifiable (pg_restore -l) and simple to
+          repeat. Downtime = seconds for this dataset size.
+      when: pg_major_upgrade_needed | bool
+
+    - name: Scale postgres to 0 replicas
+      ansible.builtin.command: kubectl scale deploy/postgres -n {{ k8s_namespace }} --replicas=0
+      when: pg_major_upgrade_needed | bool
+
+    - name: Wait for postgres pod to terminate
+      ansible.builtin.command: kubectl wait --for=delete pod -l app=postgres -n {{ k8s_namespace }} --timeout=120s
+      when: pg_major_upgrade_needed | bool
+      failed_when: false
+      changed_when: false
+
+    - name: Delete postgres deployment and PVC (data is safe in {{ backup_path }})
+      ansible.builtin.shell: |
+        kubectl delete deploy postgres -n {{ k8s_namespace }} --ignore-not-found
+        kubectl delete pvc postgres-pvc -n {{ k8s_namespace }} --ignore-not-found
+      when: pg_major_upgrade_needed | bool
+      changed_when: true
+
+    - name: Deploy postgres {{ postgres_major }} (fresh PVC, new major)
+      ansible.builtin.include_role:
+        name: database
+      when: pg_major_upgrade_needed | bool
+
+    - name: Copy dump into new postgres pod
+      ansible.builtin.shell: |
+        POD=$(kubectl get pod -n {{ k8s_namespace }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+        kubectl cp {{ backup_path }}/postgres.dump {{ k8s_namespace }}/$POD:/tmp/postgres.dump
+      args:
+        executable: /bin/bash
+      when: pg_major_upgrade_needed | bool
+      changed_when: true
+
+    - name: Restore dump into postgres {{ postgres_major }}
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} deploy/postgres --
+        pg_restore -U {{ vault_postgres_user }} -d {{ vault_postgres_db }}
+        --clean --if-exists --no-owner /tmp/postgres.dump
+      when: pg_major_upgrade_needed | bool
+      register: pg_restore_result
+      changed_when: true
+      failed_when: pg_restore_result.rc != 0
+
+    - name: Verify restored data (LiteLLM tables exist)
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} deploy/postgres --
+        psql -U {{ vault_postgres_user }} -d {{ vault_postgres_db }} -tAc
+        "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
+      register: pg_table_count
+      changed_when: false
+      when: pg_major_upgrade_needed | bool
+
+    - name: Fail if restore produced no tables
+      ansible.builtin.fail:
+        msg: "Postgres restore verification failed: {{ pg_table_count.stdout }} tables found"
+      when: pg_major_upgrade_needed | bool and (pg_table_count.stdout | trim | int) < 1
+
+    # ---------- 5. Component image updates (idempotent kubectl apply) ----------
+    - name: Update Qdrant image
+      ansible.builtin.include_role:
+        name: vector_db
+
+    - name: Update Ollama (unchanged, applied for completeness)
+      ansible.builtin.include_role:
+        name: model_server
+
+    - name: Update embeddings (TEI now serves the NEW embedding model)
+      ansible.builtin.include_role:
+        name: embeddings
+
+    - name: Update LiteLLM gateway image
+      ansible.builtin.include_role:
+        name: gateway
+
+    - name: Ensure database role applied even when no major upgrade was needed
+      ansible.builtin.include_role:
+        name: database
+      when: not (pg_major_upgrade_needed | bool)
+
+- name: Step 6 — data migration: re-embed into {{ collections['1.1'] }}, verify, switch alias
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  tasks:
+    - name: Get litellm pod name
+      ansible.builtin.command: >-
+        kubectl get pod -n {{ k8s_namespace }} -l app=litellm
+        -o jsonpath='{.items[0].metadata.name}'
+      register: litellm_pod
+      changed_when: false
+
+    - name: Copy migration scripts into litellm pod
+      ansible.builtin.shell: |
+        kubectl cp {{ playbook_dir }}/scripts/ensure_collection.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
+        kubectl cp {{ playbook_dir }}/scripts/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
+        kubectl cp {{ playbook_dir }}/scripts/verify_reembed.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/verify_reembed.py
+        kubectl cp {{ seed_file }} {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Create new collection {{ qdrant_collection }} WITHOUT switching alias yet
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ qdrant_collection }}
+        COLLECTION_ALIAS={{ app_contract.qdrant_collection_alias }}
+        SET_ALIAS=0
+        python3 /tmp/ensure_collection.py
+      changed_when: false
+
+    - name: Re-embed all documents with the NEW embedding model into {{ qdrant_collection }}
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env EMBED_ALIAS={{ app_contract.embedding_model_alias }}
+        QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ qdrant_collection }}
+        SEED_FILE=/tmp/documents.jsonl
+        python3 /tmp/seed_documents.py
+      register: reembed_result
+      changed_when: "'created collection' in reembed_result.stdout"
+
+    - name: Show re-embed result
+      ansible.builtin.debug:
+        var: reembed_result.stdout_lines
+
+    - name: Verify new collection (20 docs + acceptance queries) BEFORE alias switch
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env LITELLM_MASTER_KEY={{ vault_litellm_master_key }}
+        EMBED_ALIAS={{ app_contract.embedding_model_alias }}
+        QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ qdrant_collection }}
+        python3 /tmp/verify_reembed.py
+      register: verify_result
+      changed_when: false
+      no_log: true
+
+    - name: Show verification result
+      ansible.builtin.debug:
+        var: verify_result.stdout_lines
+
+    - name: Switch 'documents' alias to {{ qdrant_collection }} (atomic, no reader downtime)
+      ansible.builtin.command: >-
+        kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
+        env QDRANT_URL=http://qdrant:6333
+        QDRANT_COLLECTION={{ qdrant_collection }}
+        COLLECTION_ALIAS={{ app_contract.qdrant_collection_alias }}
+        SET_ALIAS=1
+        python3 /tmp/ensure_collection.py
+      changed_when: false
+
+    - name: Keep old collection {{ collections['1.0'] }} for rollback (do NOT delete)
+      ansible.builtin.debug:
+        msg: "Old collection {{ collections['1.0'] }} retained. Delete manually after soak period."
+
+- name: Step 7 — smoke test after upgrade
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  tasks:
+    - name: Run smoke test
+      ansible.builtin.include_role:
+        name: smoke_test
