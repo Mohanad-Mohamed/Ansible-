@@ -1,0 +1,15 @@
+---
+- name: Render TEI manifest
+  ansible.builtin.template:
+    src: tei.yaml.j2
+    dest: /opt/ai-platform/manifests/tei.yaml
+    mode: "0644"
+
+- name: Apply TEI manifest
+  ansible.builtin.command: kubectl apply -f /opt/ai-platform/manifests/tei.yaml
+  register: tei_apply
+  changed_when: "'configured' in tei_apply.stdout or 'created' in tei_apply.stdout"
+
+- name: Wait for embeddings rollout (model load may take minutes)
+  ansible.builtin.command: kubectl rollout status deployment/embeddings -n {{ k8s_namespace }} --timeout=900s
+  changed_when: false

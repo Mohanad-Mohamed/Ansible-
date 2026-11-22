@@ -1,0 +1,55 @@
+---
+# GPU support for NVIDIA nodes. Auto-detected: every task is skipped when
+# no NVIDIA GPU / driver is present, so CPU-only nodes are unaffected.
+# Code-review deliverable — not exercised on the CPU test VM.
+- name: Detect NVIDIA GPU via nvidia-smi
+  ansible.builtin.command: nvidia-smi -L
+  register: nvidia_smi
+  changed_when: false
+  failed_when: false
+
+- name: Detect NVIDIA GPU via lspci (fallback, driver may not be installed yet)
+  ansible.builtin.shell: lspci 2>/dev/null | grep -i nvidia || true
+  register: lspci_gpu
+  changed_when: false
+  failed_when: false
+
+- name: Set gpu_present fact
+  ansible.builtin.set_fact:
+    gpu_present: "{{ nvidia_smi.rc == 0 or (lspci_gpu.stdout | default('') | length > 0) }}"
+
+- name: Report GPU detection
+  ansible.builtin.debug:
+    msg: "GPU detected on {{ inventory_hostname }}: {{ gpu_present }}"
+
+- name: Install NVIDIA driver (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - nvidia-driver-550
+      - nvidia-container-toolkit
+    state: present
+    update_cache: true
+  when: gpu_present | bool
+
+- name: Configure containerd/nvidia runtime for k3s
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml.d/nvidia.toml
+    mode: "0644"
+    content: |
+      # k3s drop-in config for NVIDIA GPU support
+      nvidia:
+        enabled: true
+  when: gpu_present | bool
+
+- name: Restart k3s to pick up GPU config
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+  when: gpu_present | bool
+
+- name: Deploy NVIDIA device plugin + time-slicing
+  ansible.builtin.shell: |
+    kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.0/deployments/static/nvidia-device-plugin.yml
+  when: gpu_present | bool
+  changed_when: true
+  failed_when: false

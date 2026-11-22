@@ -1,0 +1,55 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embeddings
+  namespace: {{ k8s_namespace }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels: { app: embeddings }
+  template:
+    metadata:
+      labels: { app: embeddings }
+    spec:
+      containers:
+        - name: tei
+          image: {{ images.tei }}
+          args:
+            - --model-id={{ embedding_model }}
+            - --port=80
+          ports: [{ containerPort: 80 }]
+          env:
+            # HF_HOME on a PVC lets the air-gap bundle pre-seed model weights.
+            - { name: HF_HOME, value: /data/hf }
+          volumeMounts:
+            - { name: cache, mountPath: /data }
+          readinessProbe:
+            httpGet: { path: /health, port: 80 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30   # model download can be slow on first boot
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 4Gi }
+      volumes:
+        - name: cache
+          persistentVolumeClaim: { claimName: embeddings-cache-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: embeddings-cache-pvc
+  namespace: {{ k8s_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embeddings
+  namespace: {{ k8s_namespace }}
+spec:
+  selector: { app: embeddings }
+  ports: [{ port: 80, targetPort: 80 }]

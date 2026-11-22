@@ -1,0 +1,15 @@
+---
+- name: Render litellm manifest
+  ansible.builtin.template:
+    src: litellm.yaml.j2
+    dest: /opt/ai-platform/manifests/litellm.yaml
+    mode: "0644"
+
+- name: Apply litellm manifest
+  ansible.builtin.command: kubectl apply -f /opt/ai-platform/manifests/litellm.yaml
+  register: litellm_apply
+  changed_when: "'configured' in litellm_apply.stdout or 'created' in litellm_apply.stdout"
+
+- name: Wait for litellm rollout
+  ansible.builtin.command: kubectl rollout status deployment/litellm -n {{ k8s_namespace }} --timeout=300s
+  changed_when: false

@@ -1,0 +1,37 @@
+---
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - jq
+      - unzip
+      - python3-pip
+      - python3-venv
+      - postgresql-client
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create ai-platform directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ backup_dir }}"
+    - /opt/ai-platform
+    - /opt/ai-platform/manifests
+
+- name: Kernel params for k3s/containerd
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { name: net.ipv4.ip_forward, value: "1" }
+    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }

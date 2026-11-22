@@ -1,0 +1,76 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: litellm-credentials
+  namespace: {{ k8s_namespace }}
+type: Opaque
+stringData:
+  master_key: "{{ vault_litellm_master_key }}"
+  database_url: "postgresql://{{ vault_postgres_user }}:{{ vault_postgres_password }}@postgres:5432/{{ vault_postgres_db }}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: {{ k8s_namespace }}
+data:
+  litellm_config.yaml: |
+    model_list:
+      - model_name: {{ app_contract.chat_model_alias }}
+        litellm_params:
+          model: ollama/{{ chat_model }}
+          api_base: http://ollama:11434
+      - model_name: {{ app_contract.embedding_model_alias }}
+        litellm_params:
+          model: huggingface/{{ embedding_model }}
+          api_base: http://embeddings
+          api_key: none
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: {{ k8s_namespace }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels: { app: litellm }
+  template:
+    metadata:
+      labels: { app: litellm }
+    spec:
+      containers:
+        - name: litellm
+          image: {{ images.litellm }}
+          command: ["litellm", "--config", "/etc/litellm/litellm_config.yaml", "--port", "4000"]
+          ports: [{ containerPort: 4000 }]
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom: { secretKeyRef: { name: litellm-credentials, key: master_key } }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: litellm-credentials, key: database_url } }
+            - { name: STORE_MODEL_IN_DB, value: "True" }
+          volumeMounts:
+            - { name: config, mountPath: /etc/litellm }
+          readinessProbe:
+            httpGet: { path: /health/liveliness, port: 4000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: config
+          configMap: { name: litellm-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: {{ k8s_namespace }}
+spec:
+  selector: { app: litellm }
+  ports: [{ port: 4000, targetPort: 4000 }]

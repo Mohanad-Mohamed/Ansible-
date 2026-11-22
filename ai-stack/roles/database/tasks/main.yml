@@ -1,0 +1,15 @@
+---
+- name: Render postgres manifest
+  ansible.builtin.template:
+    src: postgres.yaml.j2
+    dest: /opt/ai-platform/manifests/postgres.yaml
+    mode: "0644"
+
+- name: Apply postgres manifest
+  ansible.builtin.command: kubectl apply -f /opt/ai-platform/manifests/postgres.yaml
+  register: pg_apply
+  changed_when: "'configured' in pg_apply.stdout or 'created' in pg_apply.stdout"
+
+- name: Wait for postgres rollout
+  ansible.builtin.command: kubectl rollout status deployment/postgres -n {{ k8s_namespace }} --timeout=300s
+  changed_when: false

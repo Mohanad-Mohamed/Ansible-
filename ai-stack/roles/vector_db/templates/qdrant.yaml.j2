@@ -1,0 +1,52 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: {{ k8s_namespace }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels: { app: qdrant }
+  template:
+    metadata:
+      labels: { app: qdrant }
+    spec:
+      containers:
+        - name: qdrant
+          image: {{ images.qdrant }}
+          ports:
+            - { containerPort: 6333, name: http }
+            - { containerPort: 6334, name: grpc }
+          volumeMounts:
+            - { name: data, mountPath: /qdrant/storage }
+          readinessProbe:
+            httpGet: { path: /readyz, port: 6333 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: qdrant-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-pvc
+  namespace: {{ k8s_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: {{ k8s_namespace }}
+spec:
+  selector: { app: qdrant }
+  ports:
+    - { port: 6333, targetPort: 6333, name: http }
+    - { port: 6334, targetPort: 6334, name: grpc }

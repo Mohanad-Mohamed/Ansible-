@@ -1,0 +1,35 @@
+---
+- name: Render smoke test script
+  ansible.builtin.template:
+    src: smoke.py.j2
+    dest: /opt/ai-platform/smoke.py
+    mode: "0755"
+
+- name: Get litellm pod name
+  ansible.builtin.command: >-
+    kubectl get pod -n {{ k8s_namespace }} -l app=litellm
+    -o jsonpath='{.items[0].metadata.name}'
+  register: litellm_pod
+  changed_when: false
+
+- name: Copy smoke test into litellm pod
+  ansible.builtin.command: >-
+    kubectl cp /opt/ai-platform/smoke.py
+    {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/smoke.py
+  changed_when: false
+
+- name: Run smoke test inside litellm pod
+  ansible.builtin.command: >-
+    kubectl exec -n {{ k8s_namespace }} deploy/litellm -- python3 /tmp/smoke.py
+  register: smoke_result
+  changed_when: false
+  failed_when: false
+
+- name: Show smoke test output
+  ansible.builtin.debug:
+    var: smoke_result.stdout_lines
+
+- name: Fail with clear message if smoke test failed
+  ansible.builtin.fail:
+    msg: "{{ smoke_result.stderr }}"
+  when: smoke_result.rc != 0

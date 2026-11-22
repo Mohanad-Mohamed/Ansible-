@@ -1,0 +1,51 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: {{ k8s_namespace }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels: { app: ollama }
+  template:
+    metadata:
+      labels: { app: ollama }
+    spec:
+      containers:
+        - name: ollama
+          image: {{ images.ollama }}
+          ports: [{ containerPort: 11434 }]
+          env:
+            - { name: OLLAMA_HOST, value: "0.0.0.0:11434" }
+            - { name: OLLAMA_MODELS, value: /models }
+          volumeMounts:
+            - { name: models, mountPath: /models }
+          readinessProbe:
+            httpGet: { path: /api/version, port: 11434 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 4Gi }
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: ollama-models-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models-pvc
+  namespace: {{ k8s_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: {{ k8s_namespace }}
+spec:
+  selector: { app: ollama }
+  ports: [{ port: 11434, targetPort: 11434 }]

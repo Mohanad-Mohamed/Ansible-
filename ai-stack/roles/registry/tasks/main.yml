@@ -1,0 +1,15 @@
+---
+- name: Render registry manifest
+  ansible.builtin.template:
+    src: registry.yaml.j2
+    dest: /opt/ai-platform/manifests/registry.yaml
+    mode: "0644"
+
+- name: Apply registry manifest
+  ansible.builtin.command: kubectl apply -f /opt/ai-platform/manifests/registry.yaml
+  register: registry_apply
+  changed_when: "'configured' in registry_apply.stdout or 'created' in registry_apply.stdout"
+
+- name: Wait for registry rollout
+  ansible.builtin.command: kubectl rollout status deployment/registry -n {{ k8s_namespace }} --timeout=300s
+  changed_when: false

@@ -1,0 +1,44 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: {{ k8s_namespace }}
+spec:
+  replicas: {{ registry_replicas }}
+  selector:
+    matchLabels: { app: registry }
+  template:
+    metadata:
+      labels: { app: registry }
+    spec:
+      containers:
+        - name: registry
+          image: {{ images.registry }}
+          ports: [{ containerPort: 5000 }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/registry }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: registry-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-pvc
+  namespace: {{ k8s_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 20Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: {{ k8s_namespace }}
+spec:
+  selector: { app: registry }
+  ports: [{ port: 5000, targetPort: 5000 }]

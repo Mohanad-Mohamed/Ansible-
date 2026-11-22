@@ -1,0 +1,31 @@
+---
+- name: Render ollama manifest
+  ansible.builtin.template:
+    src: ollama.yaml.j2
+    dest: /opt/ai-platform/manifests/ollama.yaml
+    mode: "0644"
+
+- name: Apply ollama manifest
+  ansible.builtin.command: kubectl apply -f /opt/ai-platform/manifests/ollama.yaml
+  register: ollama_apply
+  changed_when: "'configured' in ollama_apply.stdout or 'created' in ollama_apply.stdout"
+
+- name: Wait for ollama rollout
+  ansible.builtin.command: kubectl rollout status deployment/ollama -n {{ k8s_namespace }} --timeout=300s
+  changed_when: false
+
+- name: Check if chat model is already pulled
+  ansible.builtin.command: >-
+    kubectl exec -n {{ k8s_namespace }} deploy/ollama --
+    ollama list --format json
+  register: ollama_models
+  changed_when: false
+  failed_when: false
+
+- name: Pull pinned chat model (idempotent — skipped if present)
+  ansible.builtin.command: >-
+    kubectl exec -n {{ k8s_namespace }} deploy/ollama --
+    ollama pull {{ chat_model }}
+  when: chat_model not in (ollama_models.stdout | default(''))
+  register: ollama_pull
+  changed_when: true
