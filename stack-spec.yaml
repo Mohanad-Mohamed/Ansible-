@@ -1,0 +1,57 @@
+# Two releases of the mini AI stack. You deploy 1.0, load seed data, then upgrade to 1.1.
+# Where a value says "choose", pick a real version, pin it in your release variables and say why in your README.
+
+cluster:
+  distribution: k3s
+  nodes: 1                      # staging; design so prod can have several nodes (patch them one at a time)
+namespaces: [ai-platform]
+
+components:
+  registry:      { purpose: "local image registry; the only image source when airgapped=true", port: 5000 }
+  model_server:  { purpose: "OpenAI-compatible chat API", options: [ollama, "llama.cpp server"] }
+  embeddings:    { purpose: "embeddings API", image: "huggingface text-embeddings-inference (cpu)" }
+  vector_db:     { purpose: "vector storage with persistent volume and snapshots", image: qdrant }
+  gateway:       { purpose: "API-key protected OpenAI-compatible endpoint", image: litellm, depends_on: [model_server, embeddings, database] }
+  database:      { purpose: "LiteLLM state (keys, spend)", image: postgres, persistent: true }
+
+app_contract:                   # what applications use; must not change between releases
+  chat_model_alias: onprem-chat
+  embedding_model_alias: onprem-embed
+  qdrant_collection_alias: documents   # apps read this alias, never a physical collection name
+
+releases:
+  "1.0":
+    os_patching: false
+    k3s: "choose a v1.N release"
+    postgres: "16"
+    qdrant: "choose a 1.x version"
+    litellm: "choose a version"
+    chat_model: "any instruct model <= 1B params (e.g. a Qwen2.5 0.5B instruct build)"
+    embedding_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"   # 384 dimensions
+    qdrant_collection: documents_v1
+
+  "1.1":
+    os_patching: true           # Ubuntu security updates, reboot only if required
+    k3s: "the next minor release after 1.0 (v1.N+1)"
+    postgres: "17"              # major upgrade, data must be kept
+    qdrant: "a newer 1.x version than 1.0"
+    litellm: "a newer version than 1.0"
+    chat_model: "same as 1.0"
+    embedding_model: "intfloat/multilingual-e5-small"   # also 384 dimensions, but NOT compatible with 1.0 vectors
+    qdrant_collection: documents_v2                     # re-embed, verify, then move the alias
+
+environments:
+  staging: { replicas: 1, airgapped: false }
+  prod:    { replicas: 2, airgapped: true }   # replicas where it makes sense
+
+acceptance_after_upgrade:
+  - all 20 seed documents searchable through the "documents" alias with the new model
+  - "query 'حد السحب اليومي من الصراف الآلي' returns doc s07 in the top 3"
+  - "query 'password minimum length' returns doc s01 in the top 3"
+  - both LiteLLM API keys created on 1.0 still work on 1.1
+  - smoke test passes; a second run of the upgrade playbook reports 0 changed
+
+gpu:
+  role: gpu
+  applies_to: hosts with an NVIDIA GPU (auto-detected)
+  includes: [driver check, nvidia-container-toolkit, k8s device plugin, optional time-slicing]

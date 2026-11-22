@@ -1,0 +1,20 @@
+{"id": "s01", "lang": "en", "text": "Standard user passwords must be at least 14 characters long."}
+{"id": "s02", "lang": "en", "text": "Privileged account passwords are rotated automatically every 90 days."}
+{"id": "s03", "lang": "en", "text": "USB storage is blocked by default; exceptions last at most 30 days."}
+{"id": "s04", "lang": "en", "text": "Security logs are kept 12 months online and 5 years in archive."}
+{"id": "s05", "lang": "en", "text": "A P1 incident requires a first response within 15 minutes."}
+{"id": "s06", "lang": "en", "text": "Customer data breaches must be reported to the regulator within 24 hours."}
+{"id": "s07", "lang": "ar", "text": "الحد اليومي للسحب النقدي من الصراف الآلي لبطاقة الخصم الكلاسيكية ٢٥ ألف جنيه."}
+{"id": "s08", "lang": "ar", "text": "يجب الإبلاغ عن المعاملات النقدية التي تبلغ ٣٠٠ ألف جنيه أو أكثر."}
+{"id": "s09", "lang": "ar", "text": "يتم تحديث بيانات العملاء ذوي المخاطر المرتفعة سنويًا."}
+{"id": "s10", "lang": "ar", "text": "فتح حساب لشخص ذي مخاطر سياسية يحتاج موافقة رئيس قطاع الالتزام."}
+{"id": "s11", "lang": "ar", "text": "رمز التحقق المرسل على الهاتف صالح لمدة خمس دقائق فقط."}
+{"id": "s12", "lang": "ar", "text": "يتم قفل الحساب بعد خمس محاولات دخول خاطئة لمدة ثلاثين دقيقة."}
+{"id": "s13", "lang": "en", "text": "International SWIFT transfers cost 0.1 percent, minimum 150 and maximum 1,500 EGP."}
+{"id": "s14", "lang": "en", "text": "InstaPay transfers cost 0.1 percent with a maximum of 20 EGP."}
+{"id": "s15", "lang": "ar", "text": "تحفظ سجلات المعاملات لمدة سبع سنوات على الأقل."}
+{"id": "s16", "lang": "en", "text": "Backups are encrypted with AES-256 and the keys stay in the bank HSM."}
+{"id": "s17", "lang": "ar", "text": "البنك لا يطلب أبدًا كلمة المرور أو رمز التحقق في مكالمة هاتفية."}
+{"id": "s18", "lang": "en", "text": "Tier 1 systems have a recovery time objective of 8 hours."}
+{"id": "s19", "lang": "ar", "text": "يعمل فرع مصر الجديدة من الأحد إلى الخميس من الثامنة والنصف صباحًا."}
+{"id": "s20", "lang": "en", "text": "The backup vendor contract can be terminated with 90 days notice."}
