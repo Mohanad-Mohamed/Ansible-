@@ -1,0 +1,70 @@
+---
+# Load an offline bundle on an air-gapped site, then deploy.
+#   ansible-playbook -i inventories/prod playbooks/bundle-load.yml -e release=1.1 \
+#       -e bundle_path=/path/to/bundle/1.1
+# Run BEFORE site.yml/upgrade.yml on air-gapped hosts.
+- name: Load offline bundle
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  vars:
+    bundle_path: "{{ bundle_path | default(playbook_dir ~ '/bundle/' ~ release) }}"
+  tasks:
+    - name: Verify checksums
+      ansible.builtin.shell: |
+        cd {{ bundle_path }} && sha256sum -c SHA256SUMS
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Load each image, tag for local registry, push
+      ansible.builtin.shell: |
+        set -e
+        declare -A MAP=(
+          [registry]="{{ images.registry }}"
+          [postgres]="{{ images.postgres }}"
+          [qdrant]="{{ images.qdrant }}"
+          [litellm]="{{ images.litellm }}"
+          [ollama]="{{ images.ollama }}"
+          [tei]="{{ images.tei }}"
+        )
+        for key in "${!MAP[@]}"; do
+          src="${MAP[$key]}"
+          docker load -i {{ bundle_path }}/images/${key}.tar
+          docker tag "$src" "{{ registry_host }}/${src}"
+          docker push "{{ registry_host }}/${src}"
+        done
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Install k3s from bundle (air-gapped: no internet fetch)
+      ansible.builtin.shell: install -m 0755 {{ bundle_path }}/k3s/k3s /usr/local/bin/k3s
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Seed ollama model store into the PVC
+      ansible.builtin.shell: |
+        POD=$(kubectl get pod -n {{ k8s_namespace }} -l app=ollama -o jsonpath='{.items[0].metadata.name}')
+        kubectl cp {{ bundle_path }}/ollama {{ k8s_namespace }}/$POD:/tmp/ollama-models
+        kubectl exec -n {{ k8s_namespace }} $POD -- sh -c 'cp -r /tmp/ollama-models/* /models/ 2>/dev/null || true'
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
+    - name: Seed HF model cache into the embeddings PVC
+      ansible.builtin.shell: |
+        POD=$(kubectl get pod -n {{ k8s_namespace }} -l app=embeddings -o jsonpath='{.items[0].metadata.name}')
+        kubectl cp {{ bundle_path }}/hf {{ k8s_namespace }}/$POD:/tmp/hf
+        kubectl exec -n {{ k8s_namespace }} $POD -- sh -c 'cp -r /tmp/hf/* /data/hf/ 2>/dev/null || true'
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
+    - name: Bundle loaded
+      ansible.builtin.debug:
+        msg: "Offline bundle loaded. Cluster can now run fully air-gapped."

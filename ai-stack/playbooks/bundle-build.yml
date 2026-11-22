@@ -1,0 +1,80 @@
+---
+# Build an offline bundle for a release. Run on a machine WITH internet
+# (the Ansible controller or a build VM with docker installed).
+#   ansible-playbook -i inventories/staging playbooks/bundle-build.yml -e release=1.1
+#
+# Produces bundle/<release>/ containing:
+#   images/*.tar        - docker save output for every pinned image
+#   ollama/             - ollama model blobs+manifests (copy into the PVC)
+#   hf/                 - HuggingFace model cache for TEI (copy into the PVC)
+#   k3s/k3s             - k3s binary for the pinned version
+#   SHA256SUMS          - checksums for everything
+- name: Build offline bundle for release {{ release }}
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+  vars:
+    bundle_root: "{{ playbook_dir }}/bundle/{{ release }}"
+  tasks:
+    - name: Create bundle directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ bundle_root }}"
+        - "{{ bundle_root }}/images"
+        - "{{ bundle_root }}/ollama"
+        - "{{ bundle_root }}/hf"
+        - "{{ bundle_root }}/k3s"
+
+    - name: Pull and save every pinned image
+      ansible.builtin.shell: |
+        docker pull {{ item.value }}
+        docker save -o {{ bundle_root }}/images/{{ item.key }}.tar {{ item.value }}
+      args:
+        executable: /bin/bash
+      loop: "{{ images | dict2items }}"
+      register: image_bundle
+      changed_when: true
+
+    - name: Download pinned k3s binary
+      ansible.builtin.get_url:
+        url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/k3s"
+        dest: "{{ bundle_root }}/k3s/k3s"
+        mode: "0755"
+
+    - name: Pull chat model into bundle (ollama model store format)
+      ansible.builtin.shell: |
+        docker run --rm \
+          -e OLLAMA_MODELS=/models \
+          -v {{ bundle_root }}/ollama:/models \
+          {{ images.ollama }} ollama pull {{ chat_model }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Download embedding model into bundle (HF cache format)
+      ansible.builtin.shell: |
+        docker run --rm \
+          -v {{ bundle_root }}/hf:/data \
+          -e HF_HOME=/data/hf \
+          python:3.12-slim sh -c "pip install -q huggingface_hub && \
+            python -c \"from huggingface_hub import snapshot_download; \
+            snapshot_download('{{ embedding_model }}')\""
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Generate checksums
+      ansible.builtin.shell: |
+        cd {{ bundle_root }} && find . -type f ! -name SHA256SUMS -exec sha256sum {} + > SHA256SUMS
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Bundle complete
+      ansible.builtin.debug:
+        msg: "Bundle ready at {{ bundle_root }} — copy to the air-gapped site and run playbooks/bundle-load.yml"
