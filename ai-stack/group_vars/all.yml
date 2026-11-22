@@ -1,0 +1,54 @@
+---
+# Pinned tool versions. Bump deliberately, never use 'latest'.
+k3s_version: "v1.30.4+k3s1"          # release 1.0 baseline (v1.30 LTS line)
+k3s_version_next: "v1.31.5+k3s1"     # release 1.1 target (next minor)
+
+# Container images (release 1.0). Release 1.1 overrides the ones that change.
+images:
+  registry: "registry:2.8.3"
+  postgres: "postgres:16.4-bookworm"
+  qdrant: "qdrant/qdrant:v1.11.3"
+  litellm: "ghcr.io/berriai/litellm:v1.51.1"
+  ollama: "ollama/ollama:0.5.4"
+  tei: "ghcr.io/huggingface/text-embeddings-inference:1.6"
+
+# Release 1.1 image overrides (merged in group_vars/releases/1.1.yml)
+postgres_major_next: "17"
+postgres_image_next: "postgres:17.2-bookworm"
+qdrant_image_next: "qdrant/qdrant:v1.12.4"
+litellm_image_next: "ghcr.io/berriai/litellm:v1.55.0"
+
+# Models (pinned, small enough for CPU / air-gap bundle)
+chat_model: "qwen2.5:0.5b-instruct"          # ~400 MB, OpenAI-compatible via Ollama
+embedding_model_1_0: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"  # 384 dims
+embedding_model_1_1: "intfloat/multilingual-e5-small"                              # 384 dims, incompatible vectors
+
+# Application contract (must NOT change between releases)
+app_contract:
+  chat_model_alias: "onprem-chat"
+  embedding_model_alias: "onprem-embed"
+  qdrant_collection_alias: "documents"
+
+# Per-release physical collection names
+collections:
+  "1.0": "documents_v1"
+  "1.1": "documents_v2"
+
+# Cluster / namespace
+k8s_namespace: "ai-platform"
+k3s_data_dir: "/var/lib/rancher/k3s"
+
+# Registry (used as image source when airgapped=true)
+registry_host: "registry.ai-platform.local:5000"
+registry_replicas: 1
+
+# Service exposure (NodePort for on-prem demo; change per env)
+node_port_base: 30000
+
+# Backup
+backup_dir: "/var/backups/ai-platform"
+backup_retention_days: 14
+
+# Paths on the Ansible controller
+bundle_dir: "{{ playbook_dir }}/bundle"
+seed_file: "{{ playbook_dir }}/../seed/documents.jsonl"

@@ -1,0 +1,11 @@
+---
+# Secrets — ENCRYPT WITH: ansible-vault encrypt group_vars/all/vault.yml
+# Template for vault.yml. Copy to vault.yml and encrypt.
+
+vault_ansible_become_pass: "CHANGE_ME"
+vault_litellm_master_key: "sk-CHANGE_ME_MASTER_KEY"
+vault_postgres_user: "litellm"
+vault_postgres_password: "CHANGE_ME_DB_PASSWORD"
+vault_postgres_db: "litellm"
+vault_litellm_key_chat: ""
+vault_litellm_key_embed: ""

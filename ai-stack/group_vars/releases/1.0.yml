@@ -1,0 +1,17 @@
+---
+# Release 1.0 — initial deployment.
+release: "1.0"
+
+images:
+  registry: "registry:2.8.3"
+  postgres: "postgres:16.4-bookworm"
+  qdrant: "qdrant/qdrant:v1.11.3"
+  litellm: "ghcr.io/berriai/litellm:v1.51.1"
+  ollama: "ollama/ollama:0.5.4"
+  tei: "ghcr.io/huggingface/text-embeddings-inference:1.6"
+
+postgres_major: "16"
+embedding_model: "{{ embedding_model_1_0 }}"
+qdrant_collection: "{{ collections['1.0'] }}"
+
+os_patching: false

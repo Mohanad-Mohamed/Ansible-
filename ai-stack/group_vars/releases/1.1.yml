@@ -1,0 +1,19 @@
+---
+# Release 1.1 — upgrade target.
+release: "1.1"
+
+k3s_version: "{{ k3s_version_next }}"
+
+images:
+  registry: "registry:2.8.3"
+  postgres: "{{ postgres_image_next }}"
+  qdrant: "{{ qdrant_image_next }}"
+  litellm: "{{ litellm_image_next }}"
+  ollama: "ollama/ollama:0.5.4"        # unchanged
+  tei: "ghcr.io/huggingface/text-embeddings-inference:1.6"  # unchanged
+
+postgres_major: "{{ postgres_major_next }}"
+embedding_model: "{{ embedding_model_1_1 }}"
+qdrant_collection: "{{ collections['1.1'] }}"
+
+os_patching: true

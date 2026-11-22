@@ -1,0 +1,4 @@
+---
+# Environment: prod — air-gapped, 2 replicas where it makes sense
+replicas: 2
+airgapped: true

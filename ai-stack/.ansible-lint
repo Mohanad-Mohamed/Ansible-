@@ -1,0 +1,9 @@
+---
+# ansible-lint configuration
+profile: moderate
+skip_list:
+  - yaml[line-length]          # long kubectl commands are clearer unbroken
+  - name[template]             # play names contain jinja ({{ release }})
+  - var-naming[no-role-prefix] # vault_* names are intentional
+  - risky-shell-pipeline       # kubectl pipes are reviewed
+  - command-instead-of-module  # kubectl has no ansible module

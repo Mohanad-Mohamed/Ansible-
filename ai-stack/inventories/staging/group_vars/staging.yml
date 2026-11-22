@@ -1,0 +1,4 @@
+---
+# Environment: staging
+replicas: 1
+airgapped: false

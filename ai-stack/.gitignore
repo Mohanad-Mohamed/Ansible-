@@ -1,0 +1,14 @@
+# Secrets / generated material — NEVER commit
+*.retry
+*.log
+generated-keys.json
+rotated-secrets.json
+group_vars/all/vault.yml
+!group_vars/all/vault.yml.example
+
+# Bundle output (large)
+bundle/
+
+# Python
+__pycache__/
+*.pyc
