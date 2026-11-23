@@ -7,9 +7,11 @@
   hosts: all
   become: true
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   vars:
-    bundle_path: "{{ bundle_path | default(playbook_dir ~ '/bundle/' ~ release) }}"
+    bundle_path: "{{ bundle_path | default(playbook_dir ~ '/../bundle/' ~ release) }}"
   tasks:
     - name: Verify checksums
       ansible.builtin.shell: |
@@ -39,7 +41,7 @@
         executable: /bin/bash
       changed_when: true
 
-    - name: Install k3s from bundle (air-gapped: no internet fetch)
+    - name: "Install k3s from bundle (air-gapped: no internet fetch)"
       ansible.builtin.shell: install -m 0755 {{ bundle_path }}/k3s/k3s /usr/local/bin/k3s
       args:
         executable: /bin/bash

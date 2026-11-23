@@ -30,7 +30,7 @@ app_contract:
   qdrant_collection_alias: "documents"
 
 # Per-release physical collection names
-collections:
+qdrant_collections:
   "1.0": "documents_v1"
   "1.1": "documents_v2"
 
@@ -49,6 +49,10 @@ node_port_base: 30000
 backup_dir: "/var/backups/ai-platform"
 backup_retention_days: 14
 
-# Paths on the Ansible controller
-bundle_dir: "{{ playbook_dir }}/bundle"
-seed_file: "{{ playbook_dir }}/../seed/documents.jsonl"
+# Paths on the Ansible controller (relative to CWD — run playbooks from ai-stack/)
+bundle_dir: "bundle"
+seed_file: "../seed/documents.jsonl"
+
+# Sudo password for become — templated here because INI inventories do NOT
+# support Jinja. Value comes from the encrypted vault file.
+ansible_become_pass: "{{ vault_ansible_become_pass }}"

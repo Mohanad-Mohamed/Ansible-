@@ -12,6 +12,6 @@ images:
 
 postgres_major: "16"
 embedding_model: "{{ embedding_model_1_0 }}"
-qdrant_collection: "{{ collections['1.0'] }}"
+qdrant_collection: "{{ qdrant_collections['1.0'] }}"
 
 os_patching: false

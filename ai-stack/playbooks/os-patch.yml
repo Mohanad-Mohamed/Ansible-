@@ -8,7 +8,9 @@
   become: true
   serial: 1
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   tasks:
     - name: Skip when release does not require OS patching
       ansible.builtin.meta: end_play

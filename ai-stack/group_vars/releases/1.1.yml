@@ -14,6 +14,6 @@ images:
 
 postgres_major: "{{ postgres_major_next }}"
 embedding_model: "{{ embedding_model_1_1 }}"
-qdrant_collection: "{{ collections['1.1'] }}"
+qdrant_collection: "{{ qdrant_collections['1.1'] }}"
 
 os_patching: true

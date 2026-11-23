@@ -24,11 +24,13 @@
 - name: Step 2 — OS security patching (self-skips unless os_patching=true)
   import_playbook: os-patch.yml
 
-- name: Step 3+ — platform and component upgrade to {{ release }}
+- name: "Step 3+ — platform and component upgrade"
   hosts: all
   become: true
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   roles:
     - k3s            # upgrades k3s binary if k3s_version differs (idempotent)
 
@@ -138,11 +140,13 @@
         name: database
       when: not (pg_major_upgrade_needed | bool)
 
-- name: Step 6 — data migration: re-embed into {{ collections['1.1'] }}, verify, switch alias
+- name: "Step 6 — data migration: re-embed, verify, switch alias"
   hosts: all
   become: true
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   tasks:
     - name: Get litellm pod name
       ansible.builtin.command: >-
@@ -153,9 +157,9 @@
 
     - name: Copy migration scripts into litellm pod
       ansible.builtin.shell: |
-        kubectl cp {{ playbook_dir }}/scripts/ensure_collection.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
-        kubectl cp {{ playbook_dir }}/scripts/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
-        kubectl cp {{ playbook_dir }}/scripts/verify_reembed.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/verify_reembed.py
+        kubectl cp {{ playbook_dir }}/../scripts/ensure_collection.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
+        kubectl cp {{ playbook_dir }}/../scripts/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
+        kubectl cp {{ playbook_dir }}/../scripts/verify_reembed.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/verify_reembed.py
         kubectl cp {{ seed_file }} {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
       args:
         executable: /bin/bash
@@ -212,15 +216,17 @@
         python3 /tmp/ensure_collection.py
       changed_when: false
 
-    - name: Keep old collection {{ collections['1.0'] }} for rollback (do NOT delete)
+    - name: "Keep old collection {{ qdrant_collections['1.0'] }} for rollback (do NOT delete)"
       ansible.builtin.debug:
-        msg: "Old collection {{ collections['1.0'] }} retained. Delete manually after soak period."
+        msg: "Old collection {{ qdrant_collections['1.0'] }} retained. Delete manually after soak period."
 
 - name: Step 7 — smoke test after upgrade
   hosts: all
   become: true
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   tasks:
     - name: Run smoke test
       ansible.builtin.include_role:

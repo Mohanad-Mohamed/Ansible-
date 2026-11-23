@@ -9,14 +9,16 @@
 #   hf/                 - HuggingFace model cache for TEI (copy into the PVC)
 #   k3s/k3s             - k3s binary for the pinned version
 #   SHA256SUMS          - checksums for everything
-- name: Build offline bundle for release {{ release }}
+- name: Build offline bundle for the requested release
   hosts: localhost
   connection: local
   gather_facts: false
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   vars:
-    bundle_root: "{{ playbook_dir }}/bundle/{{ release }}"
+    bundle_root: "{{ playbook_dir }}/../bundle/{{ release }}"
   tasks:
     - name: Create bundle directory structure
       ansible.builtin.file:

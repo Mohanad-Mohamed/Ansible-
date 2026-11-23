@@ -16,11 +16,13 @@
 #  - OS patches / k3s version: k3s rolls back via the installer; OS patches
 #    are NOT rolled back (they are security fixes; rolling them back would
 #    reintroduce CVEs — documented, accepted risk).
-- name: Rollback to release {{ release }}
+- name: Rollback to the requested release
   hosts: all
   become: true
   vars_files:
-    - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
+    - "{{ playbook_dir }}/../group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/../group_vars/all.yml"
+    - "{{ playbook_dir }}/../group_vars/releases/{{ release }}.yml"
   tasks:
     # ---------- 0. Find the newest backup ----------
     - name: Locate newest backup directory
@@ -47,17 +49,17 @@
 
     - name: Copy ensure_collection.py
       ansible.builtin.command: >-
-        kubectl cp {{ playbook_dir }}/scripts/ensure_collection.py
+        kubectl cp {{ playbook_dir }}/../scripts/ensure_collection.py
         {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
       when: litellm_pod.rc == 0
       changed_when: true
       failed_when: false
 
-    - name: Point 'documents' alias back to {{ collections['1.0'] }}
+    - name: "Point 'documents' alias back to {{ qdrant_collections['1.0'] }}"
       ansible.builtin.command: >-
         kubectl exec -n {{ k8s_namespace }} {{ litellm_pod.stdout }} --
         env QDRANT_URL=http://qdrant:6333
-        QDRANT_COLLECTION={{ collections['1.0'] }}
+        QDRANT_COLLECTION={{ qdrant_collections['1.0'] }}
         COLLECTION_ALIAS={{ app_contract.qdrant_collection_alias }}
         python3 /tmp/ensure_collection.py
       when: litellm_pod.rc == 0

@@ -1,0 +1,15 @@
+# Secrets / generated credentials — NEVER commit
+ai-stack/generated-keys.json
+ai-stack/rotated-secrets.json
+
+# Air-gap bundles (large binaries)
+ai-stack/bundle/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.retry
