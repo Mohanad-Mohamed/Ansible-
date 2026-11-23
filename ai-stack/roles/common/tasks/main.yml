@@ -25,6 +25,16 @@
     - /opt/ai-platform
     - /opt/ai-platform/manifests
 
+- name: Load br_netfilter kernel module (required for bridge-nf-call-iptables)
+  ansible.builtin.shell: modprobe br_netfilter
+  changed_when: false
+
+- name: Persist br_netfilter across reboots
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/br_netfilter.conf
+    content: "br_netfilter\n"
+    mode: "0644"
+
 - name: Kernel params for k3s/containerd
   ansible.posix.sysctl:
     name: "{{ item.name }}"

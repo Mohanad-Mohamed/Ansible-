@@ -26,6 +26,18 @@
   changed_when: false
   when: k3s_install is changed or k3s_installed.rc != 0
 
+- name: Wait for k3s kubeconfig file to be written
+  ansible.builtin.wait_for:
+    path: /etc/rancher/k3s/k3s.yaml
+    timeout: 120
+    state: present
+
+- name: Ensure /root/.kube directory exists
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: "0700"
+
 - name: Symlink kubectl and k3s kubeconfig for convenience
   ansible.builtin.file:
     src: "{{ item.src }}"
