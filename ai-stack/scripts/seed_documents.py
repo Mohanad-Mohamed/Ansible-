@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import urllib.request
+import uuid
 
 LITELLM = "http://localhost:4000"
 MASTER_KEY = os.environ["LITELLM_MASTER_KEY"]
@@ -70,7 +71,7 @@ def main():
                  {"model": EMBED_ALIAS, "input": d["text"]})
         vec = r["data"][0]["embedding"]
         points.append({
-            "id": f"doc-{d['id']}",
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"doc-{d['id']}")),
             "vector": vec,
             "payload": {"doc_id": d["id"], "lang": d["lang"], "text": d["text"]},
         })

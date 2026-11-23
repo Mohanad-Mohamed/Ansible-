@@ -10,7 +10,7 @@ images:
   qdrant: "{{ qdrant_image_next }}"
   litellm: "{{ litellm_image_next }}"
   ollama: "ollama/ollama:0.5.4"        # unchanged
-  tei: "ghcr.io/huggingface/text-embeddings-inference:1.6"  # unchanged
+  tei: "ghcr.io/huggingface/text-embeddings-inference:cpu-1.6"  # unchanged
 
 postgres_major: "{{ postgres_major_next }}"
 embedding_model: "{{ embedding_model_1_1 }}"

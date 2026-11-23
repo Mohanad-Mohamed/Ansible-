@@ -20,11 +20,21 @@
       register: litellm_pod
       changed_when: false
 
+    - name: Copy scripts and seed file to node
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/opt/ai-platform/{{ item | basename }}"
+        mode: "0644"
+      loop:
+        - "{{ playbook_dir }}/../scripts/seed_documents.py"
+        - "{{ playbook_dir }}/../scripts/create_keys.py"
+        - "{{ lookup('env', 'PWD') }}/{{ seed_file }}"
+
     - name: Copy seed file and scripts into litellm pod
       ansible.builtin.shell: |
-        kubectl cp {{ seed_file }} {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
-        kubectl cp {{ playbook_dir }}/../scripts/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
-        kubectl cp {{ playbook_dir }}/../scripts/create_keys.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/create_keys.py
+        kubectl cp /opt/ai-platform/documents.jsonl {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
+        kubectl cp /opt/ai-platform/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
+        kubectl cp /opt/ai-platform/create_keys.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/create_keys.py
       changed_when: false
 
     - name: Load documents into Qdrant collection {{ qdrant_collection }}
@@ -72,7 +82,7 @@
 
     - name: Write keys to local file for vault update (git-ignored)
       ansible.builtin.copy:
-        dest: "{{ playbook_dir }}/../generated-keys.json"
+        dest: "{{ playbook_dir | dirname }}/generated-keys.json"
         mode: "0600"
         content: "{{ app_keys | to_nice_json }}\n"
       when: keys_secret.rc != 0

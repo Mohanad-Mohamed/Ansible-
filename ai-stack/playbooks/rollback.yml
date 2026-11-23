@@ -47,9 +47,16 @@
       changed_when: false
       failed_when: false
 
-    - name: Copy ensure_collection.py
+    - name: Copy ensure_collection.py to node
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/ensure_collection.py"
+        dest: /opt/ai-platform/ensure_collection.py
+        mode: "0644"
+      when: litellm_pod.rc == 0
+
+    - name: Copy ensure_collection.py into litellm pod
       ansible.builtin.command: >-
-        kubectl cp {{ playbook_dir }}/../scripts/ensure_collection.py
+        kubectl cp /opt/ai-platform/ensure_collection.py
         {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
       when: litellm_pod.rc == 0
       changed_when: true
@@ -109,11 +116,27 @@
       when: pg_rollback_needed | bool
       changed_when: true
 
-    - name: Restore dump into postgres {{ postgres_major }}
-      ansible.builtin.command: >-
-        kubectl exec -n {{ k8s_namespace }} deploy/postgres --
-        pg_restore -U {{ vault_postgres_user }} -d {{ vault_postgres_db }}
-        --clean --if-exists --no-owner /tmp/postgres.dump
+    # The backup dump may be in a NEWER pg_dump format than the target
+    # server's pg_restore (e.g. dumped on pg17, restoring into pg16).
+    # Run the restore from a temp pod with the newer client image —
+    # pg_restore N can read older/equal formats and its SQL is server-agnostic.
+    - name: Restore dump via newer pg_restore client pod
+      ansible.builtin.shell: |
+        set -e
+        kubectl delete pod pgrestore-tmp -n {{ k8s_namespace }} --ignore-not-found --wait=true
+        kubectl run pgrestore-tmp -n {{ k8s_namespace }} \
+          --image={{ postgres_image_next }} --restart=Never \
+          --env="PGPASSWORD={{ vault_postgres_password }}" -- sleep 300
+        kubectl wait --for=condition=Ready pod/pgrestore-tmp -n {{ k8s_namespace }} --timeout=120s
+        POD=$(kubectl get pod -n {{ k8s_namespace }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+        kubectl cp {{ k8s_namespace }}/$POD:/tmp/postgres.dump /tmp/postgres.dump
+        kubectl cp /tmp/postgres.dump {{ k8s_namespace }}/pgrestore-tmp:/tmp/postgres.dump
+        kubectl exec pgrestore-tmp -n {{ k8s_namespace }} -- \
+          pg_restore -h postgres -U {{ vault_postgres_user }} -d {{ vault_postgres_db }} \
+          --clean --if-exists --no-owner /tmp/postgres.dump || true
+        kubectl delete pod pgrestore-tmp -n {{ k8s_namespace }} --ignore-not-found
+      args:
+        executable: /bin/bash
       when: pg_rollback_needed | bool
       changed_when: true
 

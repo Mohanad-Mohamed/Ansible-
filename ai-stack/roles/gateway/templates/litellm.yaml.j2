@@ -23,8 +23,8 @@ data:
           api_base: http://ollama:11434
       - model_name: {{ app_contract.embedding_model_alias }}
         litellm_params:
-          model: huggingface/{{ embedding_model }}
-          api_base: http://embeddings
+          model: openai/{{ embedding_model }}
+          api_base: http://embeddings/v1
           api_key: none
     general_settings:
       master_key: os.environ/LITELLM_MASTER_KEY

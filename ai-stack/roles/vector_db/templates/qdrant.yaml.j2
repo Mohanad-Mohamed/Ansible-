@@ -6,6 +6,9 @@ metadata:
   namespace: {{ k8s_namespace }}
 spec:
   replicas: {{ replicas }}
+  # Recreate: Qdrant holds an exclusive WAL lock on its PVC — a rolling
+  # update deadlocks (old pod keeps the lock, new pod can't start).
+  strategy: { type: Recreate }
   selector:
     matchLabels: { app: qdrant }
   template:

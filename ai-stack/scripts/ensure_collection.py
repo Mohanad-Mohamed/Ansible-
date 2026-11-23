@@ -41,11 +41,21 @@ def main():
         print(f"alias '{ALIAS}' left unchanged (SET_ALIAS=0)")
         return
 
-    # Point the stable alias at this release's collection (atomic switch,
-    # readers never see a missing collection).
-    qdrant("PUT", "/collections/aliases", {
-        "actions": [{"create_alias": {"collection_name": COLLECTION, "alias_name": ALIAS}}]
-    })
+    # Point the stable alias at this release's collection. On 409 (alias
+    # already exists) delete it first so re-runs and release switches work.
+    try:
+        qdrant("POST", "/collections/aliases", {
+            "actions": [{"create_alias": {"collection_name": COLLECTION, "alias_name": ALIAS}}]
+        })
+    except urllib.error.HTTPError as e:
+        if e.code != 409:
+            raise
+        qdrant("POST", "/collections/aliases", {
+            "actions": [
+                {"delete_alias": {"alias_name": ALIAS}},
+                {"create_alias": {"collection_name": COLLECTION, "alias_name": ALIAS}},
+            ]
+        })
     print(f"alias '{ALIAS}' -> '{COLLECTION}'")
 
 

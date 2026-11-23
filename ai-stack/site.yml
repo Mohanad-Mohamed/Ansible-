@@ -5,6 +5,8 @@
   hosts: all
   become: true
   vars_files:
+    - "{{ playbook_dir }}/group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/group_vars/all.yml"
     - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
   roles:
     - common
@@ -21,6 +23,8 @@
   hosts: all
   become: true
   vars_files:
+    - "{{ playbook_dir }}/group_vars/all/vault.yml"
+    - "{{ playbook_dir }}/group_vars/all.yml"
     - "{{ playbook_dir }}/group_vars/releases/{{ release }}.yml"
   tasks:
     - name: Get litellm pod name
@@ -30,9 +34,15 @@
       register: litellm_pod
       changed_when: false
 
+    - name: Copy scripts to node
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/scripts/"
+        dest: /opt/ai-platform/scripts/
+        mode: "0755"
+
     - name: Copy ensure_collection.py into litellm pod
       ansible.builtin.command: >-
-        kubectl cp {{ playbook_dir }}/scripts/ensure_collection.py
+        kubectl cp /opt/ai-platform/scripts/ensure_collection.py
         {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
       changed_when: false
 

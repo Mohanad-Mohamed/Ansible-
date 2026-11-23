@@ -155,12 +155,23 @@
       register: litellm_pod
       changed_when: false
 
+    - name: Copy migration scripts and seed file to node
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/opt/ai-platform/{{ item | basename }}"
+        mode: "0644"
+      loop:
+        - "{{ playbook_dir }}/../scripts/ensure_collection.py"
+        - "{{ playbook_dir }}/../scripts/seed_documents.py"
+        - "{{ playbook_dir }}/../scripts/verify_reembed.py"
+        - "{{ lookup('env', 'PWD') }}/{{ seed_file }}"
+
     - name: Copy migration scripts into litellm pod
       ansible.builtin.shell: |
-        kubectl cp {{ playbook_dir }}/../scripts/ensure_collection.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
-        kubectl cp {{ playbook_dir }}/../scripts/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
-        kubectl cp {{ playbook_dir }}/../scripts/verify_reembed.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/verify_reembed.py
-        kubectl cp {{ seed_file }} {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
+        kubectl cp /opt/ai-platform/ensure_collection.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/ensure_collection.py
+        kubectl cp /opt/ai-platform/seed_documents.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/seed_documents.py
+        kubectl cp /opt/ai-platform/verify_reembed.py {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/verify_reembed.py
+        kubectl cp /opt/ai-platform/documents.jsonl {{ k8s_namespace }}/{{ litellm_pod.stdout }}:/tmp/documents.jsonl
       args:
         executable: /bin/bash
       changed_when: false
